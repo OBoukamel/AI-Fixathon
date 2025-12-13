@@ -1,0 +1,23 @@
+{
+  "id": 4463,
+  "survey": "Community Health: Psychosocial Distress Screening (brief)__FINAL2.xlsx",
+  "tool": [
+    "kobo",
+    "odk"
+  ],
+  "country": "CI / Ghana?",
+  "pii": "yes but anonymized",
+  "gps": true,
+  "notes": "Enumerator said network was bad, data synced later",
+  "files": {
+    "form": "form/psychosocial_screening.xlsx",
+    "data": "data/SUBMISSIONS_export.csv"
+  },
+  "tags": [
+    "health",
+    "test",
+    "stress",
+    null,
+    123
+  ]
+}

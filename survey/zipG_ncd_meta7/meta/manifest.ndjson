@@ -1,0 +1,5 @@
+{"event_time": "2025-10-17T17:17:39Z", "event": "schema_drift_detected", "form": "ncd_screening", "source": "kobo_api", "severity": "error", "details": {"file": "data/submissions.csv"}}
+{"event_time": "2025-11-26T19:54:39Z", "event": "schema_drift_detected", "form": "ncd_screening", "source": "kobo_api", "severity": "info", "details": {"file": "data/submissions.csv"}}
+{"event_time": "2025-10-24T22:41:39Z", "event": "schema_drift_detected", "form": "ncd_screening", "source": "manual_upload", "severity": "error", "details": {"file": "data/part-2.csv"}}
+{"event_time": "2025-08-22T15:59:39Z", "event": "submission_ingested", "form": "ncd_screening", "source": "odk_central", "severity": "warn", "details": {"file": "data/submissions.csv"}}
+{"event_time": "2025-11-25T23:38:39Z", "event": "sync_delayed", "form": "ncd_screening", "source": "odk_central", "severity": "warn", "details": {"file": "data/part-4.csv"}}

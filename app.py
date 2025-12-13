@@ -1,5 +1,9 @@
-"""Streamlit app: chat with LLM, explore CSVs, generate insights and project plans."""
+"""Streamlit app: chat with LLM, explore CSVs/ZIPs, generate insights and project plans."""
 from __future__ import annotations
+
+import io
+import zipfile
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -8,169 +12,78 @@ from utils_analysis import generate_project_plan, simple_priority_score, summari
 from utils_chat import add_message, init_chat_state, render_chat_history
 from utils_data import build_table_preview_markdown, load_uploaded_csvs
 from utils_llm import llm_chat_with_history
+from utils_zip import extract_zip_to_dir, render_tree, zip_to_tree
 
 
-st.set_page_config(
-    page_title="Impact AI Assistant",
-    page_icon="🌍",
-    layout="wide",
-)
-
-st.title("🌍 Impact AI Assistant – Hackathon Demo")
+st.set_page_config(page_title="Clinical Research AI Assistant", page_icon=":earth_africa:", layout="wide")
+st.title("Impact AI Assistant – Hackathon Demo")
 
 # --- SIDEBAR ---
-st.sidebar.header("⚙️ Configuration")
-
-model = st.sidebar.selectbox(
-    "LLM model",
-    ["gpt-4.1-mini", "gpt-4.1", "gpt-4.1-preview"],
-    index=0,
-)
-
-st.sidebar.markdown("### 📂 Upload multiple CSV files")
-uploaded_files = st.sidebar.file_uploader(
-    "Choose one or more CSV files",
-    type=["csv"],
-    accept_multiple_files=True,
-)
-
-if uploaded_files:
-    tables = load_uploaded_csvs(uploaded_files)
-    st.session_state["tables"] = tables
-    st.sidebar.success(f"{len(tables)} table(s) loaded.")
-else:
-    tables = st.session_state.get("tables", {})
-
-if tables:
-    st.sidebar.markdown("### Loaded tables")
-    for name in tables.keys():
-        st.sidebar.write(f"- `{name}`")
+st.sidebar.header("Configuration")
 
 # --- MAIN TABS ---
-tab_chat, tab_data, tab_ideas = st.tabs(["🤖 Chat with data", "📊 Data Explorer", "💡 Ideas & Project Plan"])
+tab_zip, tab_ideas = st.tabs(
+    ["Survey Explorer and data summary", "Exploring data based on research questions"]
+)
+
+  
 
 # ==============================
-# TAB 1 — CHAT WITH DATA
+# TAB 3 — ZIP EXPLORER
 # ==============================
-with tab_chat:
-    st.subheader("🤖 Chat with your contextualized LLM")
-    init_chat_state()
-    render_chat_history()
+with tab_zip:
+    st.subheader("ZIP Explorer — upload and browse archives")
+    uploaded_zips = st.file_uploader(
+        "Upload one or more ZIP files",
+        type=["zip"],
+        accept_multiple_files=True,
+        key="zip_uploader",
+    )
 
-    data_context = build_table_preview_markdown(tables, max_rows=5)
+    zip_root = Path("survey")
+    zip_root.mkdir(parents=True, exist_ok=True)
+    st.caption(f"ZIP storage folder: {zip_root.resolve()}")
 
-    default_system_prompt = f"""
-You are an AI assistant for a hackathon on the Sustainable Development Goals (SDGs).
+    if not uploaded_zips:
+        st.info("Upload ZIP files to see their internal file tree and extraction folder.")
+    else:
+        for up in uploaded_zips:
+            zip_name = Path(up.name).stem
+            archive_path = zip_root / up.name
+            archive_path.write_bytes(up.read())
 
-Here are previews of the available tables:
+            with zipfile.ZipFile(archive_path, mode="r") as zf:
+                tree = zip_to_tree(zf)
 
-{data_context}
+                st.subheader(f"Archive: {up.name}")
+                render_tree(tree)
 
-Rules:
-- Use the data whenever relevant.
-- Refer to table and column names explicitly.
-    """
+                out_dir = zip_root / zip_name
+                out_dir.mkdir(parents=True, exist_ok=True)
+                extract_zip_to_dir(zf, out_dir)
+                st.success(f"Extracted to: {out_dir}")
 
-    with st.expander("Advanced: view/modify system prompt"):
-        system_prompt = st.text_area(
-            "System prompt",
-            value=default_system_prompt,
-            height=200,
+        st.divider()
+        st.write(
+            "Tip: you can add file previews or download buttons for extracted files from the storage folder."
         )
 
-    if "system_prompt_override" not in st.session_state:
-        st.session_state.system_prompt_override = default_system_prompt
-
-    if system_prompt != st.session_state.system_prompt_override:
-        st.session_state.system_prompt_override = system_prompt
-
-    user_msg = st.chat_input("Ask a question about your data…")
-    if user_msg:
-        add_message("user", user_msg)
-        with st.chat_message("user"):
-            st.markdown(user_msg)
-
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking with your data…"):
-                reply = llm_chat_with_history(
-                    system_prompt=st.session_state.system_prompt_override,
-                    messages=st.session_state.messages,
-                    model=model,
-                )
-                st.markdown(reply)
-        add_message("assistant", reply)
+        st.markdown("### Summarize uploaded data")
+        if st.button("Generate summary"):
+            with st.spinner("Analyzing…"):
+                from utils_analysis import analyze_survey_folder
+                summary = analyze_survey_folder(folder_path = "survey/", max_rows = 500, max_chars_meta = 4000)
+            st.markdown(summary)
+        
 
 # ==============================
-# TAB 2 — DATA EXPLORER
-# ==============================
-with tab_data:
-    st.subheader("📊 Explore your tables")
-    if not tables:
-        st.info("Upload CSV files from the sidebar.")
-    else:
-        table_names = list(tables.keys())
-        selected_table = st.selectbox("Select a table", table_names)
-        df = tables[selected_table]
-
-        st.markdown(f"### Preview of `{selected_table}`")
-        st.dataframe(df.head(50))
-
-        st.markdown("#### Statistics")
-        st.write(df.describe(include="all"))
-
-        with st.expander("Priority scoring tool (optional)"):
-            numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-
-            if not numeric_cols:
-                st.write("No numeric columns available.")
-            else:
-                selected_cols = st.multiselect("Select numeric columns to include", numeric_cols)
-
-                if selected_cols:
-                    weights = {}
-                    for col in selected_cols:
-                        # Simple manual weighting; ensures deterministic behavior.
-                        w = st.number_input(
-                            f"Weight for {col}",
-                            min_value=0.0,
-                            max_value=1.0,
-                            value=0.3,
-                        )
-                        weights[col] = w
-
-                    if st.button("Compute priority score"):
-                        scored = simple_priority_score(df, weights)
-                        st.success("Computed scoring:")
-                        st.dataframe(scored.head(50))
-
-# ==============================
-# TAB 3 — IDEAS & PROJECT PLAN
+# TAB 4 — IDEAS & PROJECT PLAN
 # ==============================
 with tab_ideas:
-    st.subheader("💡 Summary & Impact Project Generator")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("### 1️⃣ Summarize uploaded data")
-        if st.button("Generate summary"):
-            if not tables:
-                st.warning("No tables available.")
-            else:
-                with st.spinner("Analyzing…"):
-                    summary = summarize_tables(tables)
-                st.markdown(summary)
-
-    with col2:
-        st.markdown("### 2️⃣ Create SDG project plan")
-        problem_description = st.text_area(
-            "Describe the challenge or SDG problem you want to solve",
-            height=150,
-        )
-        if st.button("Generate project plan"):
-            if not problem_description.strip():
-                st.warning("Please describe the problem first.")
-            else:
-                with st.spinner("Generating project…"):
-                    plan = generate_project_plan(problem_description)
-                st.markdown(plan)
+    st.markdown("Let's make research!")
+    from utils_analysis import collect_survey_data_files_ai
+    with st.spinner("Identifying survey data…"):
+        data_list = collect_survey_data_files_ai(folder_path = 'survey', output_dir= "data", model = "green-l")
+        list_of_data, string = collect_survey_data_files_ai(folder_path = 'survey', output_dir= "data", model = "green-l")
+        st.write(list_of_data.keys())
+        st.markdown(string)

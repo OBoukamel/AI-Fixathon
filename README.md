@@ -31,3 +31,4 @@ streamlit run app.py
 * Data explorer & basic analytics
 * Priority scoring tool
 * Automatic SDG project plan generator
+* ZIP explorer with in-app tree rendering and optional extraction

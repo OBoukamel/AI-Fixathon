@@ -1,0 +1,35 @@
+{
+  "survey": {
+    "id": "CH_IMMUNIZATION_VISIT",
+    "name": "Child Health: Immunization Visit (0–24 months)",
+    "platform": "ODK Central"
+  },
+  "geo": {
+    "ctry": "Ivory Coast",
+    "gps": {
+      "enabled": "yes",
+      "accuracy": "±5m"
+    }
+  },
+  "ops": {
+    "offline_capable": 1,
+    "languages": "en,fr",
+    "training_done": "TRUE"
+  },
+  "risk": {
+    "pii": "medium",
+    "sensitive_topics": [
+      "health"
+    ]
+  },
+  "artifacts": [
+    {
+      "type": "xlsform",
+      "path": "form/ch_immunization_visit.xlsx"
+    },
+    {
+      "type": "submissions",
+      "path": "data/data.csv"
+    }
+  ]
+}
