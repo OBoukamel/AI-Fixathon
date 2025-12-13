@@ -176,8 +176,8 @@ def collect_survey_data_files_ai(
     folder_path: str | Path, output_dir: str | Path = "data", model: str = "green-l"
 ) -> Tuple[Dict[str, pd.DataFrame], str]:
     """
-    Use an LLM to recognize which files are survey data (vs metadata), copy them to output_dir,
-    rename them meaningfully based on content, and return a dict of DataFrames keyed by the LLM-suggested name.
+    Use an LLM to recognize which files are survey data (vs metadata), copy them to output_dir
+    (keeping the original file name), and return a dict of DataFrames keyed by the original path.
 
     Returns (dataframes_dict, status_message).
     """
@@ -218,7 +218,6 @@ You are given file summaries from a survey folder. For each file, decide if it c
 
 Return ONLY a JSON array of objects with:
 - file_name: exact file name
-- friendly_name: a concise, human-friendly table name based on what the data is about and the survey topic.
 - is_data: true/false
 
 File summaries:
@@ -226,7 +225,7 @@ File summaries:
 """
 
     llm_response = llm_chat(
-        system_prompt="Classify files as survey data vs metadata and suggest friendly table names. Respond ONLY with JSON array.",
+        system_prompt="Classify files as survey data vs metadata and respond ONLY with the requested JSON array.",
         user_message=prompt,
         model=model,
     )
@@ -238,7 +237,7 @@ File summaries:
     except Exception:
         # Fallback: assume CSV/TSV are data with generic names.
         parsed = [
-            {"file_name": c["name"], "friendly_name": Path(c["name"]).stem, "is_data": True}
+            {"file_name": c["name"], "is_data": True}
             for c in candidates
             if c["suffix"] in {".csv", ".tsv"}
         ]
@@ -254,8 +253,7 @@ File summaries:
             continue
 
         file_name = item.get("file_name")
-        friendly = item.get("friendly_name") or Path(file_name).stem if file_name else None
-        if not file_name or not friendly:
+        if not file_name:
             continue
 
         source_path = root / file_name
@@ -265,16 +263,23 @@ File summaries:
                 continue
             source_path = matches[0]
 
-        target_name = f"{friendly}.csv"
-        target = dest / target_name
-        counter = 1
+        try:
+            relative_path = source_path.relative_to(root)
+        except ValueError:
+            relative_path = Path(file_name)
+
+        target = dest / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        suffix_counter = 0
         while target.exists():
-            target = dest / f"{friendly}_{counter}.csv"
-            counter += 1
+            suffix_counter += 1
+            target = target.with_name(f"{target.stem}_{suffix_counter}{target.suffix}")
         try:
             shutil.copy2(source_path, target)
             df = pd.read_csv(target)
-            loaded[f"{friendly}_{counter}"] = df
+            # Keep the dict key identical to the original source path for simpler lookups.
+            loaded[str(source_path)] = df
         except Exception:
             continue
 

@@ -1,19 +1,14 @@
-"""LLM wrapper for GreenPT models green-r and green-l."""
-from __future__ import annotations
-
-import json
 import os
-from typing import Dict, List
-
+import json
 import requests
+from typing import Dict, List
 import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Credentials and endpoint
-API_KEY = os.getenv("GREENPT_API_KEY") or st.secrets.get("GREENPT_API_KEY")
-if not API_KEY:
+api_key = os.getenv("GREENPT_API_KEY") or st.secrets.get("GREENPT_API_KEY")
+if not api_key:
     raise RuntimeError("GREENPT_API_KEY is missing.")
 
 BASE_URL = (
@@ -22,16 +17,17 @@ BASE_URL = (
     or "https://api.greenpt.ai/v1/chat/completions"
 )
 
-# Allowed models
-KNOWN_MODELS = {"green-r", "green-l"}
-DEFAULT_MODEL = "green-r"
-
-# Capability: does the model accept a system prompt?
-MODEL_CAPABILITIES: Dict[str, Dict[str, bool]] = {
-    "green-r": {"system_prompt": False},  # lightweight, fast; treat as no system prompt
-    "green-l": {"system_prompt": False},  # large; assume no system prompt to avoid 400s
+# ---- allowed GreenPT models ----
+KNOWN_MODELS = {
+    "green-r",  # lightweight, fast
+    "green-l",  # large 120B open-source
 }
 
+# Capability: does the model accept a dedicated system prompt role?
+MODEL_CAPABILITIES: Dict[str, Dict[str, bool]] = {
+    "green-r": {"system_prompt": False},
+    "green-l": {"system_prompt": False},
+}
 
 def _validate_model(model: str) -> None:
     if model not in KNOWN_MODELS:
@@ -39,27 +35,32 @@ def _validate_model(model: str) -> None:
             f"Unsupported model '{model}'. Available models: {', '.join(sorted(KNOWN_MODELS))}"
         )
 
-
 def _post_json(payload: Dict) -> Dict:
     headers = {
-        "Authorization": f"Bearer {API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     try:
         response = requests.post(BASE_URL, json=payload, headers=headers, timeout=30)
         response.raise_for_status()
     except requests.exceptions.HTTPError as exc:
+        # Preserve the original server message for easier debugging
         raise RuntimeError(
             f"GreenPT returned HTTP {response.status_code}: {response.text}"
         ) from exc
     except requests.exceptions.ConnectionError as exc:
-        raise RuntimeError(f"Cannot reach GreenPT at {BASE_URL}. Check network/DNS.") from exc
+        raise RuntimeError(
+            f"Cannot reach GreenPT at {BASE_URL}. Check network/DNS."
+        ) from exc
     except requests.exceptions.Timeout:
         raise RuntimeError("GreenPT request timed out.")
     return response.json()
 
-
 def _build_messages_single(system_prompt: str, user_message: str, model: str) -> List[Dict[str, str]]:
+    """
+    Build a GreenPT-compatible message list. If the model does not support the
+    system role, we prepend the system instructions into the user message.
+    """
     if MODEL_CAPABILITIES[model]["system_prompt"]:
         return [
             {"role": "system", "content": system_prompt},
@@ -68,8 +69,11 @@ def _build_messages_single(system_prompt: str, user_message: str, model: str) ->
     merged = f"System instructions:\n{system_prompt}\n\nUser question:\n{user_message}"
     return [{"role": "user", "content": merged}]
 
-
 def _build_messages_history(system_prompt: str, messages: List[Dict[str, str]], model: str) -> List[Dict[str, str]]:
+    """
+    Build messages including history. If the model cannot take a system role,
+    we flatten everything into a single user message.
+    """
     if MODEL_CAPABILITIES[model]["system_prompt"]:
         return [{"role": "system", "content": system_prompt}] + messages
 
@@ -85,7 +89,7 @@ def _build_messages_history(system_prompt: str, messages: List[Dict[str, str]], 
 def llm_chat(
     system_prompt: str,
     user_message: str,
-    model: str = DEFAULT_MODEL,
+    model: str = "green-l",
     temperature: float = 0.2,
 ) -> str:
     _validate_model(model)
@@ -98,13 +102,15 @@ def llm_chat(
     try:
         return result["choices"][0]["message"]["content"]
     except (KeyError, IndexError) as exc:
-        raise RuntimeError(f"Unexpected response format: {json.dumps(result, indent=2)}") from exc
+        raise RuntimeError(
+            f"Unexpected response format: {json.dumps(result, indent=2)}"
+        ) from exc
 
 
 def llm_chat_with_history(
     system_prompt: str,
     messages: List[Dict[str, str]],
-    model: str = DEFAULT_MODEL,
+    model: str = "green-l",
     temperature: float = 0.2,
 ) -> str:
     _validate_model(model)
@@ -120,4 +126,6 @@ def llm_chat_with_history(
     try:
         return result["choices"][0]["message"]["content"]
     except (KeyError, IndexError) as exc:
-        raise RuntimeError(f"Unexpected response format: {json.dumps(result, indent=2)}") from exc
+        raise RuntimeError(
+            f"Unexpected response format: {json.dumps(result, indent=2)}"
+        ) from exc

@@ -72,7 +72,7 @@ with tab_zip:
         if st.button("Generate summary"):
             with st.spinner("Analyzing…"):
                 from utils_analysis import analyze_survey_folder
-                summary = analyze_survey_folder(folder_path = "survey/", max_rows = 500, max_chars_meta = 4000)
+                summary = analyze_survey_folder(folder_path = "survey", max_rows = 500, max_chars_meta = 4000)
             st.markdown(summary)
         
 
@@ -80,10 +80,27 @@ with tab_zip:
 # TAB 4 — IDEAS & PROJECT PLAN
 # ==============================
 with tab_ideas:
-    st.markdown("Let's make research!")
+    st.markdown("#### Let's make research!")
     from utils_analysis import collect_survey_data_files_ai
     with st.spinner("Identifying survey data…"):
         data_list = collect_survey_data_files_ai(folder_path = 'survey', output_dir= "data", model = "green-l")
         list_of_data, string = collect_survey_data_files_ai(folder_path = 'survey', output_dir= "data", model = "green-l")
         st.write(list_of_data.keys())
         st.markdown(string)
+
+    research_question = st.text_area("Describe your research idea or question:", key="research_idea", height=100)
+    describe_cleaning_process = st.text_area("Also describe data cleaning and preprocessing steps", value=True)
+    if st.button("Generate analysis plan"):
+
+        system_prompt  = f"""You are a data analyst research assistant.You are analyzing a survey dataset contained in a folder 
+        to anwer the research question: {research_question}
+        You follow the following processing steps : {describe_cleaning_process}
+        The data to use is provided in {data_list}
+Tasks: 
+- process the data files
+- write the python code to clean the data
+- generate summary statistics and visualizations""" 
+
+plan_response = llm_chat_with_history(system_prompt=system_prompt, messages=[{"role": "user", "content": "Provide the analysis plan now."}],model="green-l",
+)
+st.markdown(plan_response)

@@ -1,0 +1,13 @@
+{
+  "form_id": "diarrhea_wash_episode",
+  "tool": "odk",
+  "sector": "education",
+  "contains_pii": false,
+  "fields": [
+    "child_name",
+    "caregiver_phone"
+  ],
+  "gps": null,
+  "language": "français",
+  "submissions": "data/data.csv"
+}
