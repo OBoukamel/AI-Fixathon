@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
+import sqlite3
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -287,3 +289,147 @@ File summaries:
         return {}, "LLM did not identify any survey data files to copy."
 
     return loaded, f"Copied and loaded {len(loaded)} survey data table(s) into {dest.resolve()}"
+
+
+def collect_survey_data_files_simple(
+    folder_path: str | Path, output_dir: str | Path = "data"
+) -> Tuple[Dict[str, pd.DataFrame], str]:
+    """
+    Scan a folder for CSV files, copy them into output_dir (preserving relative paths),
+    and return a dict of DataFrames keyed by the original source path. No LLM involved.
+    """
+    root = Path(folder_path)
+    if not root.exists() or not root.is_dir():
+        return {}, f"Folder not found: {root}"
+
+    csv_files = [p for p in root.rglob("*.csv") if p.is_file()]
+    if not csv_files:
+        return {}, "No CSV files found to copy."
+
+    dest = Path(output_dir)
+    loaded: Dict[str, pd.DataFrame] = {}
+
+    for source_path in csv_files:
+        try:
+            relative_path = source_path.relative_to(root)
+        except ValueError:
+            relative_path = source_path.name
+
+        target = dest / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        suffix_counter = 0
+        while target.exists():
+            suffix_counter += 1
+            target = target.with_name(f"{target.stem}_{suffix_counter}{target.suffix}")
+
+        try:
+            shutil.copy2(source_path, target)
+            df = pd.read_csv(target)
+            # Keep the dict key identical to the original source path for simpler lookups.
+            loaded[str(source_path)] = df
+        except Exception:
+            continue
+
+    if not loaded:
+        return {}, "Failed to copy or load any CSV files."
+
+    return loaded, f"Copied and loaded {len(loaded)} CSV file(s) into {dest.resolve()}"
+
+
+def _safe_table_name(name: str) -> str:
+    """Normalize a string to a SQLite-friendly table name."""
+    name = name.strip().lower()
+    name = re.sub(r"[^a-z0-9_]+", "_", name)
+    name = re.sub(r"_+", "_", name).strip("_")
+    return name[:60] or "table"
+
+
+def _read_table_file(p: Path, max_rows: int | None = None) -> pd.DataFrame | None:
+    """Load CSV/XLS/XLSX into a DataFrame (string-typed to reduce surprises)."""
+    try:
+        if p.suffix.lower() == ".csv":
+            try:
+                return pd.read_csv(p, dtype=str, nrows=max_rows, encoding="utf-8")
+            except Exception:
+                return pd.read_csv(p, dtype=str, nrows=max_rows, encoding="latin1")
+        if p.suffix.lower() in {".xlsx", ".xls"}:
+            return pd.read_excel(p, sheet_name=0, dtype=str, nrows=max_rows)
+    except Exception:
+        return None
+    return None
+
+
+def load_survey_tables(
+    folder: Union[str, Path] = "survey",
+    output_dir: Union[str, Path] = "data",
+    db_name: str = "surveys.db",
+    *,
+    recursive: bool = True,
+    if_exists: str = "replace",
+    max_rows_per_file: int | None = None,
+) -> Tuple[Dict[str, Dict[str, Any]], str]:
+    """
+    Load CSV/XLS/XLSX files from `folder`, write them to SQLite at `output_dir/db_name`,
+    and return (tables_metadata, status_message). Keys are table names written to SQLite.
+    """
+    root = Path(folder).expanduser().resolve()
+    dest = Path(output_dir).expanduser().resolve()
+    dest.mkdir(parents=True, exist_ok=True)
+
+    db_path = dest / db_name
+
+    if not root.exists():
+        return {}, f"❌ Folder not found: `{root}`"
+
+    file_iter = root.rglob("*") if recursive else root.glob("*")
+    files = [p for p in file_iter if p.is_file() and p.suffix.lower() in {".csv", ".xlsx", ".xls"}]
+    if not files:
+        return {}, f"WARNING: No CSV/XLSX files found under `{root}`."
+
+    conn = sqlite3.connect(db_path)
+    written: Dict[str, Dict[str, Any]] = {}
+    errors: List[str] = []
+
+    try:
+        for path in files:
+            df = _read_table_file(path, max_rows=max_rows_per_file)
+            if df is None or df.empty:
+                continue
+
+            rel = str(path.relative_to(root)).replace("\\", "/")
+            base = _safe_table_name(Path(rel).with_suffix("").as_posix())
+
+            table_name = base
+            suffix_idx = 2
+            while table_name in written:
+                table_name = f"{base}_{suffix_idx}"
+                suffix_idx += 1
+
+            try:
+                df.to_sql(table_name, conn, if_exists=if_exists, index=False)
+                written[table_name] = {
+                    "source_path": str(path),
+                    "n_rows": int(df.shape[0]),
+                    "n_cols": int(df.shape[1]),
+                    "columns": list(df.columns),
+                }
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"- `{path}` → {exc}")
+    finally:
+        conn.close()
+
+    if not written:
+        return {}, f"WARNING: No tables were written to `{db_path}`."
+
+    table_names = list(written.keys())
+    status_lines = [
+        f"Wrote {len(table_names)} table(s) to SQLite DB: `{db_path}`",
+        "",
+        "**Table names:**",
+        *[f"- `{t}`" for t in table_names],
+    ]
+    if errors:
+        status_lines += ["", "**Errors:**", *errors]
+
+    return written, "\n".join(status_lines)

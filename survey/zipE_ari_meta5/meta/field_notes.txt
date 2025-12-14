@@ -1,0 +1,8 @@
+Survey collected by CHWs in rural areas.
+Mostly offlien.
+Some GPS points missing.
+Sensitive health data (children, malaria?).
+Phones collected when available.
+Tool: probably KoBo.
+FormId: outpatient_ari_visit
+DataFile: data/submissions.csv

@@ -1,0 +1,9 @@
+source_system: kobo_api
+ingestion_type: incremental
+expected_schema: v2
+schema_drift_risk: high
+historical_backfill: true
+form_id: nutrition_muac_screening
+files:
+  - form/nutrition_muac_screening.xlsx
+  - data/data.csv
