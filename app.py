@@ -43,28 +43,29 @@ def load_schema(folder: str, cols: dict):
 def load_metadata(folder: str):
     return getting_meta_data_all(path=folder)
 
-# --- SIDEBAR ---
-st.sidebar.header("Configuration")
+
 
 # --- MAIN TABS ---
 tab_zip, tab_ideas = st.tabs(
     ["Survey Explorer and data summary", "Exploring data based on research questions"]
 )
 
-  
+    
+    # --- SIDEBAR ---
+with st.sidebar.header("Configuration"): 
+    uploaded_zips = st.file_uploader(
+            "Upload one or more ZIP files",
+            type=["zip"],
+            accept_multiple_files=True,
+            key="zip_uploader",
+        )
+
 
 # ==============================
 # TAB 3 — ZIP EXPLORER
 # ==============================
 with tab_zip:
     st.subheader("ZIP Explorer — upload and browse archives")
-    uploaded_zips = st.file_uploader(
-        "Upload one or more ZIP files",
-        type=["zip"],
-        accept_multiple_files=True,
-        key="zip_uploader",
-    )
-
     zip_root = Path("survey")
     zip_root.mkdir(parents=True, exist_ok=True)
     st.caption(f"ZIP storage folder: {zip_root.resolve()}")
@@ -106,31 +107,34 @@ with tab_zip:
 with tab_ideas:
     st.markdown("#### Let's make research!")
     st.write("### Using AI to find survey data and gather this in a list of dataframes ready for analysis")
-    with st.spinner("Identifying survey data..."):
-        list_of_data, status_msg = load_survey_tables_cached(folder="survey", output_dir="data")
-        st.write(list_of_data.keys())
-        st.markdown(status_msg)
+    tab1, tab2 = st.tabs(["Data understanding", "Research question analysis"])
+    with tab1:
+        with st.spinner("Identifying survey data..."):
+            list_of_data, status_msg = load_survey_tables_cached(folder="survey", output_dir="data")
+            st.write(list_of_data.keys())
+            st.markdown(status_msg)
 
-    if not list_of_data:
-        st.warning("No data tables found in the survey folder.")
-    else:
-        st.write("### Generate data definition")
-        with st.spinner("Generating data definition..."):
-            cols = {
-                name: info.get("columns", [])
-                for name, info in list_of_data.items()
-                if isinstance(info, dict)
-            }
-            st.write("Print of all column names in the data files:")
-            st.write(cols)
-            schema_json = load_schema("survey", cols)
-            st.write(schema_json)
-        
-        st.write("### Generating the folder meta-data")
-        with st.spinner("Preparing the detailed meta-data"):
-            meta_data = load_metadata("survey")
-            st.write(meta_data)
-
+        if not list_of_data:
+            st.warning("No data tables found in the survey folder.")
+        else:
+            with st.expander("Detailed data table previews"):
+                st.write("### Generate data definition")
+                with st.spinner("Generating data definition..."):
+                    cols = {
+                        name: info.get("columns", [])
+                        for name, info in list_of_data.items()
+                        if isinstance(info, dict)
+                        }
+                    st.write("Print of all column names in the data files:")
+                    #st.write(cols)
+                    schema_json = load_schema("survey", cols)
+                    st.write(schema_json)
+            with st.expander("Folder meta-data"):
+                    st.write("### Generating the folder meta-data")
+                    with st.spinner("Preparing the detailed meta-data"):
+                        meta_data = load_metadata("survey")
+                        st.write(meta_data)
+    with tab2:
         st.markdown("### Generate analysis plan based on research question")
         research_question = st.text_area("Describe your research idea or question:", key="research_idea", height=100)
         if st.button("Generate pre-processing"):
@@ -168,11 +172,8 @@ If the cleaning process provided by the user is not related to the data provided
 
         # Generate Python code
         if st.button("Generate Python code for data cleaning"):
-            st.session_state.generated_code = f"""import pandas as pd
-
-print("Loading data...")
-print({list(list_of_data.keys())})
-"""
+            # To modify sql query to be generated to LLM
+            st.session_state.generated_code = f"""SELECT * FROM "zipe_ari_meta5_form_outpatient_ari_visit";"""
             st.session_state.editable_code = st.session_state.generated_code
 
         # Show and optionally edit the code
@@ -186,15 +187,68 @@ print({list(list_of_data.keys())})
                     height=400,
                     key="editable_code_area",
                 )
-                st.code(st.session_state.editable_code, language="python")
+                st.code(st.session_state.editable_code, language="SQL")
             else:
-                st.code(st.session_state.generated_code, language="python")
+                st.code(st.session_state.generated_code, language="SQL")
 
-            final_python_code = (
+            final_sql_code = (
                 st.session_state.editable_code if edit_mode else st.session_state.generated_code
             )
+            st.markdown("### Execute data cleaning code")
+            if st.button("Run code"):
+                with st.spinner("Running data cleaning code..."):
+                    try:
+                        import sqlite3
+                        import pandas as pd
+
+                        sqlite_path = "./data/survey.db"
+
+                        # 1) Vérifier la connexion
+                        conn_sqlite = sqlite3.connect(sqlite_path)
+                        st.success(f"✅ Connected to database: {sqlite_path}")
+
+                        # 2) Lister les tables
+                        tables_df = pd.read_sql_query(
+                            "SELECT name AS table_name FROM sqlite_master WHERE type='table' ORDER BY name;",
+                            conn_sqlite
+                        )
+
+                        if tables_df.empty:
+                            st.warning("⚠️ No tables found in the database.")
+                        else:
+                            st.markdown("### 📂 Tables available in the database")
+                            st.dataframe(tables_df, use_container_width=True)
+
+                        # 3) Nettoyer le SQL (au cas où)
+                        def clean_sql(sql: str) -> str:
+                            sql = sql.strip()
+                            if (sql.startswith("'") and sql.endswith("'")) or (sql.startswith('"') and sql.endswith('"')):
+                                sql = sql[1:-1].strip()
+                            return sql
+
+                        sql_to_run = clean_sql(final_sql_code)
+
+                        st.markdown("### ▶️ Executing SQL query")
+                        st.code(sql_to_run, language="sql")
+
+                        # 4) Sécurité : LIMIT auto si absent
+                        if "limit" not in sql_to_run.lower():
+                            sql_to_run = sql_to_run.rstrip(";") + " LIMIT 100;"
+
+                        # 5) Exécuter la requête
+                        df = pd.read_sql_query(sql_to_run, conn_sqlite)
+
+                        st.markdown("### 📊 Query result (preview)")
+                        st.dataframe(df, use_container_width=True)
+
+                        conn_sqlite.close()
+
+                    except Exception as e:
+                        st.error(f"❌ Error executing SQL: {e}")
+
+        
         else:
             st.info("Click the button to generate code first.")
 
-        st.markdown("### Execute data cleaning code")
+
         

@@ -1,30 +1,17 @@
-
-from __future__ import annotations
-
-import json
-import shutil
 from pathlib import Path
-from typing import Dict, List, Tuple
-
-import numpy as np
+from typing import Dict, List, Union
 import pandas as pd
-
 from utils_llm import llm_chat
 
-
 def understand_survey_columns(
-    folder_path,
-    survey_columns,
-    max_rows  = 500,
-    max_chars_meta = 4000,
+    folder_path: Union[str, Path],
+    survey_schema: Dict[str, List[str]],   # <-- dict dataset -> colonnes attendues
+    max_rows: int = 200,
+    max_chars_meta: int = 2500,
+    max_chars_data: int = 6000,
+    max_meta_files: int = 15,
+    max_csv_files: int = 60,
 ) -> str:
-    """
-    Inspect a folder, separate metadata files from survey data files, and provide definitions of the survey variables.
-
-    Heuristics:
-    - Metadata files: .md, .txt, .json, .yaml, .yml (read as text, truncated)
-    - Data files: .csv (loaded as DataFrames with row cap)
-    """
     root = Path(folder_path)
     if not root.exists() or not root.is_dir():
         return f"Folder not found: {root}"
@@ -32,53 +19,95 @@ def understand_survey_columns(
     meta_suffixes = {".md", ".txt", ".json", ".yaml", ".yml"}
     data_suffixes = {".csv"}
 
+    all_files = [p for p in root.rglob("*") if p.is_file()]
+    meta_files = [p for p in all_files if p.suffix.lower() in meta_suffixes][:max_meta_files]
+    csv_files = [p for p in all_files if p.suffix.lower() in data_suffixes][:max_csv_files]
+
+    # ---- Metadata (capé) ----
     meta_blobs: List[str] = []
-    data_tables: Dict[str, pd.DataFrame] = {}
+    for p in meta_files:
+        try:
+            txt = p.read_text(encoding="utf-8", errors="ignore")[:800]
+            meta_blobs.append(f"FILE: {p.relative_to(root)}\n{txt}")
+        except Exception as exc:
+            meta_blobs.append(f"FILE: {p.relative_to(root)}\n<unable to read: {exc}>")
 
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        suffix = path.suffix.lower()
-        if suffix in meta_suffixes:
-            try:
-                text = path.read_text(encoding="utf-8", errors="ignore")
-                meta_blobs.append(f"FILE: {path.name}\n{text}")
-            except Exception as exc:  # noqa: BLE001
-                meta_blobs.append(f"FILE: {path.name}\n<unable to read: {exc}>")
-        elif suffix in data_suffixes:
-            try:
-                df = pd.read_csv(path, nrows=max_rows)
-                data_tables[path.name] = df
-            except Exception as exc:  # noqa: BLE001
-                meta_blobs.append(f"FILE: {path.name}\n<unable to load CSV: {exc}>")
+    meta_context = ("\n\n".join(meta_blobs)[:max_chars_meta]) if meta_blobs else "No metadata files found."
 
-    if not data_tables:
+    if not csv_files:
         return "No survey data (.csv) found in the folder."
 
-    meta_context = "\n\n".join(meta_blobs)[:max_chars_meta] if meta_blobs else "No metadata files found."
+    # ---- Header scan : trouver quelles colonnes de chaque dataset existent dans chaque CSV ----
+    # Important: utiliser le chemin relatif pour distinguer les data.csv
+    file_headers: Dict[str, List[str]] = {}
+    dataset_hits: Dict[str, Dict[str, List[str]]] = {ds: {} for ds in survey_schema}
 
-    snippets = []
-    for name, df in data_tables.items():
-        csv_snippet = df.head(10).to_csv(index=False)
-        snippets.append(f"DATA FILE: {name}\n{csv_snippet}")
-    data_context = "\n\n".join(snippets)[:8000]
+    for p in csv_files:
+        rel = str(p.relative_to(root))
+        try:
+            df0 = pd.read_csv(p, nrows=0)
+            headers = [c.strip() for c in df0.columns.tolist()]
+            file_headers[rel] = headers
+            header_set = set(headers)
+
+            for ds_name, expected_cols in survey_schema.items():
+                present = [c for c in expected_cols if c in header_set]
+                if present:
+                    dataset_hits[ds_name][rel] = present
+
+        except Exception:
+            continue
+
+    # Si aucun match, on renvoie un diagnostic utile
+    found_any = any(len(files) > 0 for files in dataset_hits.values())
+    if not found_any:
+        return (
+            "No expected columns were found in scanned CSV headers.\n"
+            f"Datasets expected: {list(survey_schema.keys())}\n"
+            f"Scanned files (capped): {[str(p.relative_to(root)) for p in csv_files]}"
+        )
+
+    # ---- Construire un échantillon data_context : uniquement des fichiers pertinents ----
+    relevant_files = []
+    for ds_name, files_map in dataset_hits.items():
+        for rel in files_map.keys():
+            relevant_files.append(rel)
+    # unique + ordre stable
+    relevant_files = list(dict.fromkeys(relevant_files))[:10]  # cap dur: 10 fichiers au LLM
+
+    snippets: List[str] = []
+    for rel in relevant_files:
+        p = root / rel
+        try:
+            df = pd.read_csv(p, nrows=max_rows)
+            df_small = df.head(10)
+            csv_snippet = df_small.to_csv(index=False)[:1400]
+            snippets.append(f"DATA FILE: {rel}\n{csv_snippet}")
+        except Exception as exc:
+            snippets.append(f"DATA FILE: {rel}\n<unable to load sample: {exc}>")
+
+    data_context = ("\n\n".join(snippets)[:max_chars_data]) if snippets else ""
 
     prompt = f"""
-You are identifying the column names definitions in the data from the folder from the meta data files.
+You are identifying the column definitions in survey data using metadata.
+
+Expected schema (dataset -> columns):
+{survey_schema}
+
+Where columns were found (header scan):
+{dataset_hits}
 
 Metadata excerpts:
 {meta_context}
 
-Survey data samples (CSV):
+Survey data samples:
 {data_context}
 
 Tasks:
-- Identify the column provided in arguments as {survey_columns} and in which dataset they are found.
-- Provide a concise definition for each column based on the metadata and data samples.
-- Return the result as a JSON object where keys are column names and values are their definitions.
-Return concise bullet points.
-If you can't find a definition for a column, respond with "Definition not found". 
-If you can't find the {survey_columns} just say it.
+- For each dataset, define each expected column concisely.
+- Return JSON with top-level keys = dataset names.
+- Each dataset value is a JSON object: {{column_name: definition}}.
+- If definition missing, return "Definition not found".
 """
 
     return llm_chat(
@@ -86,4 +115,3 @@ If you can't find the {survey_columns} just say it.
         user_message=prompt,
         model="green-l",
     )
-

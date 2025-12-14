@@ -35,13 +35,13 @@ def _validate_model(model: str) -> None:
             f"Unsupported model '{model}'. Available models: {', '.join(sorted(KNOWN_MODELS))}"
         )
 
-def _post_json(payload: Dict) -> Dict:
+def _post_json(payload: Dict, timeout = 60) -> Dict:
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     try:
-        response = requests.post(BASE_URL, json=payload, headers=headers, timeout=30)
+        response = requests.post(BASE_URL, json=payload, headers=headers, timeout= timeout)
         response.raise_for_status()
     except requests.exceptions.HTTPError as exc:
         # Preserve the original server message for easier debugging
