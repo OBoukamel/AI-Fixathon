@@ -1,0 +1,2 @@
+survey_name,tool_used,country_code,theme,offline,contains_pii,gps_collected,notes,submissions_file
+Malaria Case Management: RDT and Treatment,Kobo,CI,Health - Maternal,Yes,Yes,Yes,Enumerator training partial,data/records.csv

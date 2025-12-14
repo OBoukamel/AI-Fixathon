@@ -363,15 +363,15 @@ def _read_table_file(p: Path, max_rows: int | None = None) -> pd.DataFrame | Non
 def load_survey_tables(
     folder: Union[str, Path] = "survey",
     output_dir: Union[str, Path] = "data",
-    db_name: str = "surveys.db",
+    db_name: str = "survey.db",
     *,
     recursive: bool = True,
     if_exists: str = "replace",
     max_rows_per_file: int | None = None,
-) -> Tuple[Dict[str, Dict[str, Any]], str]:
+) -> Tuple[Dict[str, Dict[str, Any]], str, Path]:
     """
     Load CSV/XLS/XLSX files from `folder`, write them to SQLite at `output_dir/db_name`,
-    and return (tables_metadata, status_message). Keys are table names written to SQLite.
+    and return (tables_metadata, status_message, db_path). Keys are table names written to SQLite.
     """
     root = Path(folder).expanduser().resolve()
     dest = Path(output_dir).expanduser().resolve()
@@ -380,12 +380,12 @@ def load_survey_tables(
     db_path = dest / db_name
 
     if not root.exists():
-        return {}, f"❌ Folder not found: `{root}`"
+        return {}, f"❌ Folder not found: `{root}`", db_path
 
     file_iter = root.rglob("*") if recursive else root.glob("*")
     files = [p for p in file_iter if p.is_file() and p.suffix.lower() in {".csv", ".xlsx", ".xls"}]
     if not files:
-        return {}, f"WARNING: No CSV/XLSX files found under `{root}`."
+        return {}, f"WARNING: No CSV/XLSX files found under `{root}`.", db_path
 
     conn = sqlite3.connect(db_path)
     written: Dict[str, Dict[str, Any]] = {}
@@ -420,7 +420,7 @@ def load_survey_tables(
         conn.close()
 
     if not written:
-        return {}, f"WARNING: No tables were written to `{db_path}`."
+        return {}, f"WARNING: No tables were written to `{db_path}`.", db_path
 
     table_names = list(written.keys())
     status_lines = [
@@ -432,4 +432,4 @@ def load_survey_tables(
     if errors:
         status_lines += ["", "**Errors:**", *errors]
 
-    return written, "\n".join(status_lines)
+    return written, "\n".join(status_lines), db_path
